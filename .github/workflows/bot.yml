@@ -3,16 +3,23 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '*/5 * * * *'
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
       - uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-      - run: pip install -r requirements.txt
-      - run: timeout 270 python bot.py || true
+
+      - name: تثبيت المتطلبات
+        run: pip install python-telegram-bot==20.7
+
+      - name: تشغيل البوت
+        run: |
+          timeout 270 python bot.py || true
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
