@@ -11,9 +11,7 @@ from telegram import Update, ChatPermissions
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 from telegram.constants import ParseMode
 
-BOT_TOKEN     = os.environ.get("BOT_TOKEN", "")
-GROUP_CHAT_ID = int(os.environ.get("CHAT_ID", "0"))
-LOG_CHAT_ID   = int(os.environ.get("LOG_CHAT_ID", "0")) if os.environ.get("LOG_CHAT_ID") else None
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
 FORBIDDEN_WORDS = [
     "تواصل معي خاص",
@@ -28,6 +26,7 @@ FORBIDDEN_WORDS = [
     "استثمار مضمون",
     "عمل من البيت",
     "كسب سريع",
+    "اربح",
 ]
 
 PROMO_PATTERNS = [
@@ -41,7 +40,6 @@ PROMO_PATTERNS = [
     "تواصل معي خاص",
     "واتساب خاص",
     "للتواصل واتس",
-    "ادفع واربح",
     "profit",
     "earn money",
 ]
@@ -54,9 +52,9 @@ PHONE_PATTERNS = [
 
 BLOCKED_LINKS = [
     r"https?://",
-    r"t\.me/",
+    r"t\.me/joinchat",
+    r"t\.me/\+",
     r"bit\.ly/",
-    r"youtu\.be/",
 ]
 
 WHITELIST = [
@@ -66,11 +64,11 @@ WHITELIST = [
     "docs.google.com",
 ]
 
-RATE_LIMIT   = 5
+RATE_LIMIT = 5
 MUTE_MINUTES = 30
 MAX_WARNINGS = 3
 
-user_warnings  = defaultdict(int)
+user_warnings = defaultdict(int)
 user_msg_times = defaultdict(list)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
@@ -121,10 +119,11 @@ def check_rate(user_id):
 async def delete_msg(update, context):
     try:
         await context.bot.delete_message(update.effective_chat.id, update.message.message_id)
+        logger.info("تم حذف رسالة")
     except Exception as e:
-        logger.error("حذف: " + str(e))
+        logger.error("خطأ حذف: " + str(e))
 
-async def send_temp(context, chat_id, text, seconds=30):
+async def send_temp(context, chat_id, text, seconds=25):
     try:
         msg = await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
         await asyncio.sleep(seconds)
@@ -140,13 +139,12 @@ async def warn_user(update, context, reason):
         await ban_user(update, context, "تجاوز الحد الأقصى للتحذيرات")
         return
     text = (
-        "<b>تحذير</b> يا " + user.mention_html() + "\n"
-        "رسالتك تخالف قواعد المجموعة\n"
+        "تحذير يا " + user.mention_html() + "\n"
         "السبب: <b>" + reason + "</b>\n"
         "التحذيرات: <b>" + str(w) + "/" + str(MAX_WARNINGS) + "</b>"
     )
     asyncio.create_task(send_temp(context, update.effective_chat.id, text))
-    logger.info("تحذير | " + user.full_name + " | " + reason)
+    logger.info("تحذير | " + str(user.id) + " | " + reason)
 
 async def mute_user(update, context, reason, minutes=MUTE_MINUTES):
     user = update.effective_user
@@ -159,9 +157,9 @@ async def mute_user(update, context, reason, minutes=MUTE_MINUTES):
         )
         text = "تم كتم " + user.mention_html() + " لمدة " + str(minutes) + " دقيقة\nالسبب: " + reason
         asyncio.create_task(send_temp(context, update.effective_chat.id, text))
-        logger.info("كتم | " + user.full_name + " | " + reason)
+        logger.info("كتم | " + str(user.id) + " | " + reason)
     except Exception as e:
-        logger.error("كتم: " + str(e))
+        logger.error("خطأ كتم: " + str(e))
 
 async def ban_user(update, context, reason):
     user = update.effective_user
@@ -170,24 +168,30 @@ async def ban_user(update, context, reason):
         text = "تم حظر " + user.mention_html() + "\nالسبب: " + reason
         asyncio.create_task(send_temp(context, update.effective_chat.id, text))
         user_warnings.pop(user.id, None)
-        logger.info("حظر | " + user.full_name + " | " + reason)
+        logger.info("حظر | " + str(user.id) + " | " + reason)
     except Exception as e:
-        logger.error("حظر: " + str(e))
+        logger.error("خطأ حظر: " + str(e))
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg  = update.message
+    msg = update.message
     user = update.effective_user
     if not msg or not user:
         return
+
+    # تجاهل المشرفين والمالك فقط
     try:
         member = await context.bot.get_chat_member(msg.chat_id, user.id)
         if member.status in ("administrator", "creator"):
             return
-    except:
+    except Exception as e:
+        logger.error("خطأ التحقق: " + str(e))
         return
+
     text = msg.text or msg.caption or ""
     if not text:
         return
+
+    logger.info("فحص رسالة من: " + str(user.id) + " | " + text[:30])
 
     r = check_forbidden(text)
     if r:
@@ -219,10 +223,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "البوت يعمل\n/status - الحالة\n/addword كلمة - اضافة كلمة",
-        parse_mode=ParseMode.HTML
-    )
+    await update.message.reply_text("البوت يعمل\n/status للحالة")
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -248,8 +249,8 @@ def main():
         return
     logger.info("تشغيل البوت...")
     app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start",   cmd_start))
-    app.add_handler(CommandHandler("status",  cmd_status))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("addword", cmd_addword))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.CAPTION & ~filters.COMMAND, handle_message))
